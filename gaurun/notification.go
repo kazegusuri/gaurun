@@ -59,7 +59,7 @@ func InitGCMClient() {
 func StartPushWorkers(workerNum, queueNum int) {
 	QueueNotification = make(chan RequestGaurunNotification, queueNum)
 	for i := 0; i < workerNum; i++ {
-		go pushNotificationWorker()
+		go pushNotificationWorker(QueueNotification)
 	}
 }
 
@@ -195,7 +195,7 @@ func pushNotificationAndroid(req RequestGaurunNotification) bool {
 	return true
 }
 
-func pushNotificationWorker() {
+func pushNotificationWorker(queue chan RequestGaurunNotification) {
 	var (
 		success    bool
 		retryMax   int
@@ -215,7 +215,7 @@ func pushNotificationWorker() {
 	for {
 		stime := time.Now()
 
-		notification := <-QueueNotification
+		notification := <-queue
 
 		etime := time.Now()
 		itime := etime.Sub(stime).Seconds()
@@ -247,7 +247,7 @@ func pushNotificationWorker() {
 					LogError.Errorf("failed to connect to APNS: %s", err.Error())
 					apnsClient = nil
 					loop = 0
-					QueueNotification <- notification
+					queue <- notification
 					continue
 				}
 				apnsClient.TimeoutWaitError = time.Duration(ConfGaurun.Ios.TimeoutError) * time.Millisecond
@@ -266,9 +266,9 @@ func pushNotificationWorker() {
 			retryMax = ConfGaurun.Android.RetryMax
 		}
 		if !success && notification.Retry < retryMax {
-			if len(QueueNotification) < cap(QueueNotification) {
+			if len(queue) < cap(queue) {
 				notification.Retry++
-				QueueNotification <- notification
+				queue <- notification
 			}
 		}
 	}
