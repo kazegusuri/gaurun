@@ -5,6 +5,7 @@ import (
 	"flag"
 	"github.com/Sirupsen/logrus"
 	statsGo "github.com/fukata/golang-stats-api-handler"
+	"github.com/prometheus/client_golang/prometheus"
 	"io/ioutil"
 	"log"
 	"net"
@@ -95,6 +96,7 @@ func main() {
 	http.HandleFunc(gaurun.ConfGaurun.Api.PushUri, gaurun.PushNotificationHandler)
 	http.HandleFunc(gaurun.ConfGaurun.Api.StatGoUri, statsGo.Handler)
 	http.HandleFunc(gaurun.ConfGaurun.Api.StatAppUri, gaurun.StatsGaurunHandler)
+	http.Handle(gaurun.ConfGaurun.Api.StatPrometheusUri, prometheus.Handler())
 	http.HandleFunc(gaurun.ConfGaurun.Api.ConfigAppUri, gaurun.ConfigGaurunHandler)
 
 	// Listen TCP Port

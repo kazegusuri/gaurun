@@ -4,3 +4,4 @@ gom 'github.com/fukata/golang-stats-api-handler', :commit => '6a66ba359d3397a5e8
 gom 'github.com/BurntSushi/toml',                 :commit => '3883ac1ce943878302255f538fce319d23226223'
 gom 'github.com/Sirupsen/logrus',                 :tag    => 'v0.6.0'
 gom 'github.com/stretchr/testify',                :commit => 'd6577e08ec30538639ac0ea38b562b6f250e9055'
+gom 'github.com/prometheus/client_golang',        :tag    => '0.7.0'

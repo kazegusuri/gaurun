@@ -6,10 +6,76 @@ import (
 	"fmt"
 	"github.com/alexjlockwood/gcm"
 	"github.com/cubicdaiya/apns"
+	"github.com/prometheus/client_golang/prometheus"
 	"io/ioutil"
 	"net/http"
 	"sync/atomic"
 	"time"
+)
+
+var (
+	curQueueLen = prometheus.NewGauge(prometheus.GaugeOpts{
+		Namespace: "gaurun",
+		Subsystem: "queue",
+		Name:      "length",
+		Help:      "The current number of notification queue length.",
+	})
+	queueTotal = prometheus.NewCounter(prometheus.CounterOpts{
+		Namespace: "gaurun",
+		Subsystem: "queue",
+		Name:      "total",
+		Help:      "The total number of notifications for all devices.",
+	})
+	iosQueueTotal = prometheus.NewCounter(prometheus.CounterOpts{
+		Namespace: "gaurun",
+		Subsystem: "queue",
+		Name:      "ios_total",
+		Help:      "The total number of notifications for iOS.",
+	})
+	androidQueueTotal = prometheus.NewCounter(prometheus.CounterOpts{
+		Namespace: "gaurun",
+		Subsystem: "queue",
+		Name:      "android_total",
+		Help:      "The total number of notifications for Android.",
+	})
+
+	iosPushSuccess = prometheus.NewCounter(prometheus.CounterOpts{
+		Namespace: "gaurun",
+		Subsystem: "ios",
+		Name:      "push_success",
+		Help:      "The total number of push success for iOS",
+	})
+	iosPushError = prometheus.NewCounter(prometheus.CounterOpts{
+		Namespace: "gaurun",
+		Subsystem: "ios",
+		Name:      "push_error",
+		Help:      "The total number of push error for iOS",
+	})
+	iosPushDurationSummary = prometheus.NewSummary(prometheus.SummaryOpts{
+		Namespace: "gaurun",
+		Subsystem: "ios",
+		Name:      "push_duration",
+		Help:      "Request latency to push to iOS in senconds",
+	})
+
+	androidPushSuccess = prometheus.NewCounter(prometheus.CounterOpts{
+		Namespace: "gaurun",
+		Subsystem: "android",
+		Name:      "push_success",
+		Help:      "The total number of push success for Android",
+	})
+	androidPushError = prometheus.NewCounter(prometheus.CounterOpts{
+		Namespace: "gaurun",
+		Subsystem: "android",
+		Name:      "push_error",
+		Help:      "The total number of push error for Android",
+	})
+	androidPushDurationSummary = prometheus.NewSummary(prometheus.SummaryOpts{
+		Namespace: "gaurun",
+		Subsystem: "android",
+		Name:      "push_duration",
+		Help:      "Request latency to push to Android in senconds",
+	})
 )
 
 type RequestGaurun struct {
@@ -49,6 +115,19 @@ type CertificatePem struct {
 	Key  []byte
 }
 
+func init() {
+	prometheus.MustRegister(curQueueLen)
+	prometheus.MustRegister(queueTotal)
+	prometheus.MustRegister(iosQueueTotal)
+	prometheus.MustRegister(androidQueueTotal)
+	prometheus.MustRegister(iosPushSuccess)
+	prometheus.MustRegister(iosPushError)
+	prometheus.MustRegister(iosPushDurationSummary)
+	prometheus.MustRegister(androidPushSuccess)
+	prometheus.MustRegister(androidPushError)
+	prometheus.MustRegister(androidPushDurationSummary)
+}
+
 func InitGCMClient() {
 	TransportGaurun = &http.Transport{MaxIdleConnsPerHost: ConfGaurun.Core.WorkerNum}
 	GCMClient = &gcm.Sender{ApiKey: ConfGaurun.Android.ApiKey}
@@ -64,6 +143,7 @@ func StartPushWorkers(workerNum, queueNum int) {
 }
 
 func enqueueNotifications(notifications []RequestGaurunNotification) {
+	queueTotal.Add(float64(len(notifications)))
 	for _, notification := range notifications {
 		err := validateNotification(&notification)
 		if err != nil {
@@ -74,8 +154,10 @@ func enqueueNotifications(notifications []RequestGaurunNotification) {
 		switch notification.Platform {
 		case PlatFormIos:
 			enabledPush = ConfGaurun.Ios.Enabled
+			iosQueueTotal.Inc()
 		case PlatFormAndroid:
 			enabledPush = ConfGaurun.Android.Enabled
+			androidQueueTotal.Inc()
 		}
 		if enabledPush {
 			notification.IDs = make([]uint64, len(notification.Tokens))
@@ -129,9 +211,11 @@ func pushNotificationIos(req RequestGaurunNotification, client *apns.Client) boo
 		resp := client.Send(pn)
 		etime := time.Now()
 		ptime := etime.Sub(stime).Seconds()
+		iosPushDurationSummary.Observe(float64(ptime))
 
 		if resp.Error != nil {
 			atomic.AddInt64(&StatGaurun.Ios.PushError, 1)
+			iosPushError.Inc()
 			LogPush(req.IDs[i], StatusFailedPush, token, ptime, req, resp.Error)
 			client.Conn.Close()
 			client.ConnTls.Close()
@@ -139,6 +223,7 @@ func pushNotificationIos(req RequestGaurunNotification, client *apns.Client) boo
 		} else {
 			LogPush(id, StatusSucceededPush, token, ptime, req, nil)
 			atomic.AddInt64(&StatGaurun.Ios.PushSuccess, 1)
+			iosPushSuccess.Inc()
 		}
 	}
 
@@ -166,8 +251,10 @@ func pushNotificationAndroid(req RequestGaurunNotification) bool {
 	resp, err := GCMClient.SendNoRetry(msg)
 	etime := time.Now()
 	ptime := etime.Sub(stime).Seconds()
+	androidPushDurationSummary.Observe(float64(ptime))
 	if err != nil {
 		atomic.AddInt64(&StatGaurun.Android.PushError, 1)
+		androidPushError.Inc()
 		for i, token := range req.Tokens {
 			LogPush(req.IDs[i], StatusFailedPush, token, ptime, req, err)
 		}
@@ -177,6 +264,8 @@ func pushNotificationAndroid(req RequestGaurunNotification) bool {
 	if resp.Failure > 0 {
 		atomic.AddInt64(&StatGaurun.Android.PushSuccess, int64(resp.Success))
 		atomic.AddInt64(&StatGaurun.Android.PushError, int64(resp.Failure))
+		androidPushSuccess.Add(float64(resp.Success))
+		androidPushError.Add(float64(resp.Failure))
 		if len(resp.Results) == len(req.Tokens) {
 			for i, token := range req.Tokens {
 				if resp.Results[i].Error != "" {
@@ -190,7 +279,8 @@ func pushNotificationAndroid(req RequestGaurunNotification) bool {
 	for i, token := range req.Tokens {
 		LogPush(req.IDs[i], StatusSucceededPush, token, ptime, req, nil)
 	}
-	StatGaurun.Android.PushSuccess += int64(len(req.Tokens))
+	atomic.AddInt64(&StatGaurun.Android.PushSuccess, int64(len(req.Tokens)))
+	androidPushSuccess.Add(float64(len(req.Tokens)))
 	LogError.Debug("END push notification for Android")
 	return true
 }
@@ -213,6 +303,7 @@ func pushNotificationWorker(queue chan RequestGaurunNotification) {
 	apnsClient = nil
 	loop = 0
 	for {
+		curQueueLen.Set(float64(len(queue)))
 		stime := time.Now()
 
 		notification := <-queue

@@ -24,10 +24,11 @@ type SectionCore struct {
 }
 
 type SectionApi struct {
-	PushUri      string `toml:"push_uri"`
-	StatGoUri    string `toml:"stat_go_uri"`
-	StatAppUri   string `toml:"stat_app_uri"`
-	ConfigAppUri string `toml:"config_app_uri"`
+	PushUri           string `toml:"push_uri"`
+	StatGoUri         string `toml:"stat_go_uri"`
+	StatAppUri        string `toml:"stat_app_uri"`
+	StatPrometheusUri string `toml:"stat_prometheus_uri"`
+	ConfigAppUri      string `toml:"config_app_uri"`
 }
 
 type SectionAndroid struct {
@@ -65,6 +66,7 @@ func BuildDefaultConfGaurun() ConfToml {
 	conf.Api.PushUri = "/push"
 	conf.Api.StatGoUri = "/stat/go"
 	conf.Api.StatAppUri = "/stat/app"
+	conf.Api.StatPrometheusUri = "/stat/prometheus"
 	conf.Api.ConfigAppUri = "/config/app"
 	// Android
 	conf.Android.ApiKey = ""
